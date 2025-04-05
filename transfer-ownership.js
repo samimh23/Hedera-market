@@ -4,11 +4,58 @@ const {
   TokenAssociateTransaction,
   TransferTransaction,
   AccountBalanceQuery,
-  TokenInfoQuery
+  TokenInfoQuery,
+  AccountInfoQuery
 } = require("@hashgraph/sdk");
 require("dotenv").config();
 
-async function transferOwnershipPercentage(tokenId, recipientId, percentageToShare, marketAccountId, marketPrivateKeyString) {
+// Helper function to check if a token is associated with an account
+async function isTokenAssociated(accountId, tokenId, client) {
+  try {
+    const accountBalance = await new AccountBalanceQuery()
+      .setAccountId(accountId)
+      .execute(client);
+      
+    // Check if the token exists in the account's token balances
+    const tokenBalance = accountBalance.tokens._map.get(tokenId.toString());
+    return tokenBalance !== undefined;
+  } catch (error) {
+    console.error(`Error checking token association: ${error.message}`);
+    return false;
+  }
+}
+
+// Function to associate a token with an account
+async function associateTokenWithAccount(accountId, tokenId, privateKey) {
+  try {
+    console.log(`Attempting to associate token ${tokenId} with account ${accountId}...`);
+    
+    // Create account client with provided credentials
+    const accountPrivateKey = PrivateKey.fromString(privateKey);
+    const accountClient = Client.forTestnet();
+    accountClient.setOperator(accountId, accountPrivateKey);
+    
+    // Create and execute the association transaction
+    const associateTx = new TokenAssociateTransaction()
+      .setAccountId(accountId)
+      .setTokenIds([tokenId]);
+      
+    const associateResponse = await associateTx.execute(accountClient);
+    const associateReceipt = await associateResponse.getReceipt(accountClient);
+    
+    console.log(`Token association status: ${associateReceipt.status.toString()}`);
+    return true;
+  } catch (error) {
+    if (error.message.includes("TOKEN_ALREADY_ASSOCIATED_TO_ACCOUNT")) {
+      console.log("Token already associated with the account.");
+      return true;
+    }
+    console.error(`Error associating token: ${error.message}`);
+    return false;
+  }
+}
+
+async function transferOwnershipPercentage(tokenId, recipientId, percentageToShare, marketAccountId, marketPrivateKeyString, recipientPrivateKey = null) {
   try {
     // Create client with operator credentials first for queries
     const operatorId = process.env.MY_ACCOUNT_ID;
@@ -21,13 +68,16 @@ async function transferOwnershipPercentage(tokenId, recipientId, percentageToSha
     // Log the input parameters
     console.log(`Processing share request: ${percentageToShare}% of token ${tokenId} from ${marketAccountId} to ${recipientId}`);
     
-    // Create market client
+    // Create market client and key
     const marketPrivateKey = PrivateKey.fromString(marketPrivateKeyString);
+    const marketClient = Client.forTestnet();
+    marketClient.setOperator(marketAccountId, marketPrivateKey);
     
     console.log(`Using account ${marketAccountId} as sender`);
     console.log(`Token ID: ${tokenId}`);
     console.log(`Recipient ID: ${recipientId}`);
     console.log(`Percentage to share: ${percentageToShare}%`);
+    console.log(`Recipient private key provided: ${recipientPrivateKey ? 'Yes' : 'No'}`);
     
     // Get token info to verify token exists
     console.log("Getting token info...");
@@ -36,10 +86,11 @@ async function transferOwnershipPercentage(tokenId, recipientId, percentageToSha
       .execute(client);
     
     console.log(`Token info retrieved: ${tokenInfo.name}, ${tokenInfo.symbol}`);
-    const totalShares = 10000; // Same as in create-fractional-shares.js
     
-    // Check market account balance FIRST to ensure it has tokens before proceeding
-    console.log(`Verifying market account ${marketAccountId} has token ${tokenId} associated...`);
+    const totalShares = 10000; // Same as in create-market-token.js
+    
+    // Check market account balance first
+    console.log(`Verifying market account ${marketAccountId} has token ${tokenId}...`);
     const marketBalanceCheck = await new AccountBalanceQuery()
       .setAccountId(marketAccountId)
       .execute(client);
@@ -47,81 +98,44 @@ async function transferOwnershipPercentage(tokenId, recipientId, percentageToSha
     const marketCurrentShares = marketBalanceCheck.tokens._map.get(tokenId.toString());
     
     if (!marketCurrentShares) {
-      console.log(`Market account may need token association: Token not found in market account balance`);
-      
-      // Try to associate token with market account
-      try {
-        console.log(`Executing market association transaction...`);
-        const marketAssociateTx = new TokenAssociateTransaction()
-          .setAccountId(marketAccountId)
-          .setTokenIds([tokenId]);
-        
-        // Switch to market client for this operation
-        const marketClient = Client.forTestnet();
-        marketClient.setOperator(marketAccountId, marketPrivateKey);
-        
-        const marketAssociateResponse = await marketAssociateTx.execute(marketClient);
-        const marketAssociateReceipt = await marketAssociateResponse.getReceipt(marketClient);
-        console.log(`Market token association status: ${marketAssociateReceipt.status}`);
-        
-        // Switch back to operator client
-        client.setOperator(operatorId, operatorKey);
-      } catch (error) {
-        console.log(`Market association attempt failed: ${error.message}`);
-        // Continue to see if tokens can still be transferred
-      }
-      
-      // Check the balance again
-      const marketBalanceRecheck = await new AccountBalanceQuery()
-        .setAccountId(marketAccountId)
-        .execute(client);
-        
-      const marketSharesRecheck = marketBalanceRecheck.tokens._map.get(tokenId.toString());
-      
-      if (!marketSharesRecheck || marketSharesRecheck.toNumber() === 0) {
-        throw new Error(`Market account ${marketAccountId} does not have any tokens to transfer. The token might not have been properly created and transferred to the market account.`);
-      }
+      throw new Error(`Market account ${marketAccountId} does not have any tokens to transfer. The token might not exist or might not be associated with the market account.`);
     }
     
-    // Calculate shares to transfer based on percentage
-    const marketShares = marketCurrentShares ? marketCurrentShares.toNumber() : 0;
+    const marketShares = marketCurrentShares.toNumber();
     console.log(`Market account has ${marketShares} shares`);
     
+    // Calculate shares to transfer based on percentage
     const sharesToTransfer = Math.floor((percentageToShare / 100) * totalShares);
     
     if (marketShares < sharesToTransfer) {
       throw new Error(`Insufficient balance: Market has ${marketShares} shares, but trying to transfer ${sharesToTransfer} shares`);
     }
     
-    console.log(`Transferring ${percentageToShare}% ownership (${sharesToTransfer} shares) from ${marketAccountId} to ${recipientId}...`);
+    // Check if the token is already associated with the recipient
+    console.log(`Checking if token ${tokenId} is already associated with account ${recipientId}...`);
+    const isAssociated = await isTokenAssociated(recipientId, tokenId, client);
     
-    // First, try to associate the token with the recipient
-    try {
-      console.log(`Associating token ${tokenId} with account ${recipientId}...`);
-      const associateTx = new TokenAssociateTransaction()
-        .setAccountId(recipientId)
-        .setTokenIds([tokenId]);
+    // If token is not associated and recipient private key was provided, associate it
+    if (!isAssociated) {
+      console.log(`Token not associated with recipient account.`);
       
-      const associateResponse = await associateTx.execute(client);
-      
-      try {
-        console.log("Getting association receipt...");
-        const associateReceipt = await associateResponse.getReceipt(client);
-        console.log(`Token association status: ${associateReceipt.status}`);
-      } catch (error) {
-        console.log(`Could not get association receipt, but continuing: ${error.message}`);
+      if (recipientPrivateKey) {
+        console.log(`Recipient private key provided. Attempting to associate token automatically.`);
+        const associationSuccess = await associateTokenWithAccount(recipientId, tokenId, recipientPrivateKey);
+        
+        if (!associationSuccess) {
+          throw new Error(`Failed to automatically associate token ${tokenId} with account ${recipientId}. Please check the recipient's private key and try again.`);
+        }
+        console.log(`Token successfully associated with recipient account.`);
+      } else {
+        throw new Error(`Token ${tokenId} is not associated with recipient account ${recipientId}. Please provide the recipient's private key in the 'recipientPrivateKey' field to automatically associate the token, or have the recipient use the /api/associate endpoint.`);
       }
-    } catch (error) {
-      console.log(`Association might already exist or failed: ${error.message}`);
-      // Continue with the transfer attempt
+    } else {
+      console.log(`Token is already associated with recipient account ${recipientId}`);
     }
     
     // Now transfer the shares using the market account
-    console.log(`Creating transfer transaction...`);
-    
-    // Set up a client specifically for the market account
-    const marketClient = Client.forTestnet();
-    marketClient.setOperator(marketAccountId, marketPrivateKey);
+    console.log(`Creating transfer transaction for ${sharesToTransfer} shares (${percentageToShare}%)...`);
     
     const transferTx = new TransferTransaction()
       .addTokenTransfer(tokenId, marketAccountId, -sharesToTransfer)
@@ -171,7 +185,13 @@ async function transferOwnershipPercentage(tokenId, recipientId, percentageToSha
         transactionId: transferSubmit.transactionId.toString()
       };
     } catch (error) {
-      console.log(`Transfer error: ${error}`);
+      console.error(`Transfer error: ${error}`);
+      
+      // Check if this is a token association issue
+      if (error.message.includes("TOKEN_NOT_ASSOCIATED_TO_ACCOUNT")) {
+        throw new Error(`TOKEN_NOT_ASSOCIATED_TO_ACCOUNT: The recipient account ${recipientId} needs to be associated with token ${tokenId} before receiving shares. Please provide the recipient's private key to associate automatically, or have the recipient call the /api/associate endpoint.`);
+      }
+      
       throw error;
     }
   } catch (error) {
@@ -181,12 +201,12 @@ async function transferOwnershipPercentage(tokenId, recipientId, percentageToSha
   }
 }
 
-module.exports = { transferOwnershipPercentage };
+module.exports = { transferOwnershipPercentage, isTokenAssociated, associateTokenWithAccount };
 
 // If running directly
 if (require.main === module) {
   if (process.argv.length < 6) {
-    console.error("Usage: node transfer-ownership.js <tokenId> <recipientId> <percentageToShare> <marketAccountId> <marketPrivateKey>");
+    console.error("Usage: node transfer-ownership.js <tokenId> <recipientId> <percentageToShare> <marketAccountId> <marketPrivateKey> [recipientPrivateKey]");
     process.exit(1);
   }
   
@@ -195,8 +215,9 @@ if (require.main === module) {
   const percentageToShare = parseFloat(process.argv[4]);
   const marketAccountId = process.argv[5];
   const marketPrivateKey = process.argv[6];
+  const recipientPrivateKey = process.argv[7] || null;
   
-  transferOwnershipPercentage(tokenId, recipientId, percentageToShare, marketAccountId, marketPrivateKey)
+  transferOwnershipPercentage(tokenId, recipientId, percentageToShare, marketAccountId, marketPrivateKey, recipientPrivateKey)
     .then(result => console.log("\nOwnership transfer completed:", JSON.stringify(result, null, 2)))
     .catch(error => console.error("Error transferring ownership:", error));
 }
