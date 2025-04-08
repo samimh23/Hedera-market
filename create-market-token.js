@@ -53,12 +53,23 @@ const {
       const tokenId = receipt.tokenId;
       console.log(`Token created successfully! ID: ${tokenId}`);
       
-      // Step 1: Associate token with market account
+      // Step 1: Associate token with market account AND associate Hanoty coin
       console.log(`Associating token ${tokenId} with market account ${marketAccount}...`);
       
       const associateTx = new TokenAssociateTransaction()
         .setAccountId(marketAccount)
         .setTokenIds([tokenId]);
+
+        const tokenId1 = "0.0.5677997";  // Replace with your actual token ID
+       const txTokenAssociate = new TokenAssociateTransaction()
+      .setAccountId(marketAccount)
+      .setTokenIds([tokenId1])
+      .freezeWith(client);  
+
+    const signTxTokenAssociate = await txTokenAssociate.sign(marketKey);
+    const txTokenAssociateResponse = await signTxTokenAssociate.execute(client);
+    const receiptTokenAssociateTx = await txTokenAssociateResponse.getReceipt(client);
+
       
       // IMPORTANT - Try to sign the association with the market key
       // This is the key point - we need the market account's key to sign its associations
