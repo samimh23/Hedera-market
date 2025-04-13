@@ -1,8 +1,10 @@
 {
   "name": "hello-hedera-js-sdk",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "fractional-ownership-manager.js",
   "scripts": {
+    "start": "fractional-ownership-manager.js",
+    "dev":"fractional-ownership-manager.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
