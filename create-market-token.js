@@ -60,7 +60,7 @@ const {
         .setAccountId(marketAccount)
         .setTokenIds([tokenId]);
 
-        const tokenId1 = "0.0.5677997";  // Replace with your actual token ID
+        const tokenId1 = "0.0.5883473";  // Replace with your actual token ID
        const txTokenAssociate = new TokenAssociateTransaction()
       .setAccountId(marketAccount)
       .setTokenIds([tokenId1])
