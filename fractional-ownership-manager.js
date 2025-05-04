@@ -335,7 +335,74 @@ app.get('/api/check', async (req, res) => {
     });
   }
 });
+app.get('/api/check-all', async (req, res) => {
+  try {
+    const { tokenId } = req.query;
 
+    if (!tokenId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Token ID is required'
+      });
+    }
+
+    // First verify the token exists
+    let tokenInfo;
+    try {
+      tokenInfo = await new TokenInfoQuery()
+        .setTokenId(tokenId)
+        .execute(client);
+    } catch (error) {
+      return res.status(404).json({
+        success: false,
+        message: `Token ${tokenId} not found or not accessible: ${error.message}`
+      });
+    }
+
+    // Scan a range of accounts (for demo purposes only; production should use a DB or mirror node)
+    const totalShares = 10000; // Adjust if your total supply varies
+    const ownershipDistribution = [];
+
+    // Demo: scan accounts 0.0.1001 to 0.0.1050
+    for (let acc = 1001; acc <= 1050; acc++) {
+      try {
+        const accountId = `0.0.${acc}`;
+        const balance = await new AccountBalanceQuery()
+          .setAccountId(accountId)
+          .execute(client);
+        const shares = balance.tokens._map.get(tokenId.toString()) || 0;
+        const sharesNum = shares instanceof Object ? parseInt(shares.toString()) : 0;
+        if (sharesNum > 0) {
+          ownershipDistribution.push({
+            accountId,
+            shares: sharesNum,
+            percentage: (sharesNum / totalShares) * 100
+          });
+        }
+      } catch (error) {
+        // Ignore accounts that do not exist or aren't associated
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Full ownership distribution retrieved successfully',
+      data: {
+        fractionalTokenId: tokenId,
+        tokenName: tokenInfo.name,
+        tokenSymbol: tokenInfo.symbol,
+        totalShares: totalShares,
+        ownershipDistribution
+      }
+    });
+  } catch (error) {
+    console.error('Error checking full ownership:', error);
+    return res.status(500).json({
+      success: false,
+      message: `Failed to check full ownership: ${error.message}`
+    });
+  }
+});
 // Command-line interface for testing
 if (require.main === module) {
   // Check if we're running in CLI mode
