@@ -264,7 +264,7 @@ app.post('/api/associate', async (req, res) => {
   }
 });
 
-// GET /api/check - Check token ownership distribution
+// GET /api/check - Check token ownership distribution for a specific market account
 app.get('/api/check', async (req, res) => {
   try {
     const { tokenId, marketAccountId } = req.query;
@@ -323,7 +323,6 @@ app.get('/api/check', async (req, res) => {
             shares: marketSharesNum,
             percentage: marketPercentage
           }
-          // Additional token holders would be listed here in a full implementation
         ]
       }
     });
@@ -335,6 +334,8 @@ app.get('/api/check', async (req, res) => {
     });
   }
 });
+
+// GET /api/check-all - List all accounts holding shares of a fractional token (scans a demo range)
 app.get('/api/check-all', async (req, res) => {
   try {
     const { tokenId } = req.query;
@@ -403,6 +404,7 @@ app.get('/api/check-all', async (req, res) => {
     });
   }
 });
+
 // Command-line interface for testing
 if (require.main === module) {
   // Check if we're running in CLI mode
@@ -482,6 +484,7 @@ if (require.main === module) {
       console.log(`- POST /api/share - Share fractional ownership (with automatic association if recipientPrivateKey is provided)`);
       console.log(`- POST /api/associate - Associate a token with an account`);
       console.log(`- GET /api/check - Check token ownership distribution`);
+      console.log(`- GET /api/check-all - Check full ownership distribution for all holders in the testnet range`);
     });
   }
 }
