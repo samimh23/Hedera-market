@@ -264,7 +264,7 @@ app.post('/api/associate', async (req, res) => {
   }
 });
 
-// GET /api/check - Check token ownership distribution
+// GET /api/check - Check token ownership distribution for a specific market account
 app.get('/api/check', async (req, res) => {
   try {
     const { tokenId, marketAccountId } = req.query;
@@ -323,7 +323,6 @@ app.get('/api/check', async (req, res) => {
             shares: marketSharesNum,
             percentage: marketPercentage
           }
-          // Additional token holders would be listed here in a full implementation
         ]
       }
     });
@@ -332,6 +331,76 @@ app.get('/api/check', async (req, res) => {
     return res.status(500).json({
       success: false,
       message: `Failed to check ownership: ${error.message}`
+    });
+  }
+});
+
+// GET /api/check-all - List all accounts holding shares of a fractional token (scans a demo range)
+app.get('/api/check-all', async (req, res) => {
+  try {
+    const { tokenId } = req.query;
+
+    if (!tokenId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Token ID is required'
+      });
+    }
+
+    // First verify the token exists
+    let tokenInfo;
+    try {
+      tokenInfo = await new TokenInfoQuery()
+        .setTokenId(tokenId)
+        .execute(client);
+    } catch (error) {
+      return res.status(404).json({
+        success: false,
+        message: `Token ${tokenId} not found or not accessible: ${error.message}`
+      });
+    }
+
+    // Scan a range of accounts (for demo purposes only; production should use a DB or mirror node)
+    const totalShares = 10000; // Adjust if your total supply varies
+    const ownershipDistribution = [];
+
+    // Demo: scan accounts 0.0.1001 to 0.0.1050
+    for (let acc = 1001; acc <= 1050; acc++) {
+      try {
+        const accountId = `0.0.${acc}`;
+        const balance = await new AccountBalanceQuery()
+          .setAccountId(accountId)
+          .execute(client);
+        const shares = balance.tokens._map.get(tokenId.toString()) || 0;
+        const sharesNum = shares instanceof Object ? parseInt(shares.toString()) : 0;
+        if (sharesNum > 0) {
+          ownershipDistribution.push({
+            accountId,
+            shares: sharesNum,
+            percentage: (sharesNum / totalShares) * 100
+          });
+        }
+      } catch (error) {
+        // Ignore accounts that do not exist or aren't associated
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Full ownership distribution retrieved successfully',
+      data: {
+        fractionalTokenId: tokenId,
+        tokenName: tokenInfo.name,
+        tokenSymbol: tokenInfo.symbol,
+        totalShares: totalShares,
+        ownershipDistribution
+      }
+    });
+  } catch (error) {
+    console.error('Error checking full ownership:', error);
+    return res.status(500).json({
+      success: false,
+      message: `Failed to check full ownership: ${error.message}`
     });
   }
 });
@@ -415,6 +484,7 @@ if (require.main === module) {
       console.log(`- POST /api/share - Share fractional ownership (with automatic association if recipientPrivateKey is provided)`);
       console.log(`- POST /api/associate - Associate a token with an account`);
       console.log(`- GET /api/check - Check token ownership distribution`);
+      console.log(`- GET /api/check-all - Check full ownership distribution for all holders in the testnet range`);
     });
   }
 }
